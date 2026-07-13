@@ -432,10 +432,11 @@ interface ReaderPaneHeaderProps {
 }
 const ReaderPaneHeader: React.FC<ReaderPaneHeaderProps> = ({ tab }) => {
   const { location, book, nav, sections } = useSnapshot(tab)
+  const navigationReady = !!nav && !!sections
   const navPath = useMemo(
     () =>
-      nav && sections ? tab.getNavPathForLocation(location?.start.href) : [],
-    [location?.start.href, nav, sections, tab],
+      navigationReady ? tab.getNavPathForLocation(location?.start.href) : [],
+    [location?.start.href, navigationReady, tab],
   )
   const t = useTranslation('bookmark')
   const bookmark = book.bookmarks.find((bookmark) =>
@@ -444,8 +445,8 @@ const ReaderPaneHeader: React.FC<ReaderPaneHeaderProps> = ({ tab }) => {
   const BookmarkIcon = bookmark ? MdBookmark : MdBookmarkBorder
 
   useEffect(() => {
-    navPath.forEach((i) => (i.expanded = true))
-  }, [navPath])
+    tab.expandNavPath(navPath)
+  }, [navPath, tab])
 
   return (
     <Bar>

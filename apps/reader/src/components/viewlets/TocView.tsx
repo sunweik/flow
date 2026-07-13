@@ -1,5 +1,4 @@
 import { StateLayer } from '@literal-ui/core'
-import { useMemo } from 'react'
 import { VscCollapseAll, VscExpandAll } from 'react-icons/vsc'
 
 import {
@@ -10,7 +9,6 @@ import {
 } from '@flow/reader/hooks'
 import {
   compareHref,
-  dfs,
   flatTree,
   INavItem,
   reader,
@@ -58,7 +56,9 @@ const TocPane: React.FC = () => {
   const t = useTranslation()
   const { focusedBookTab } = useReaderSnapshot()
   const toc = focusedBookTab?.nav?.toc as INavItem[] | undefined
-  const rows = useMemo(() => toc?.flatMap((i) => flatTree(i)), [toc])
+  const tocRevision = focusedBookTab?.tocRevision
+  const rows =
+    tocRevision === undefined ? undefined : toc?.flatMap((i) => flatTree(i))
   const expanded = toc?.some((r) => r.expanded)
   const currentNavItem = focusedBookTab?.currentNavItem
 
@@ -74,9 +74,7 @@ const TocPane: React.FC = () => {
           title: t(expanded ? 'action.collapse_all' : 'action.expand_all'),
           Icon: expanded ? VscCollapseAll : VscExpandAll,
           handle() {
-            reader.focusedBookTab?.nav?.toc?.forEach((r) =>
-              dfs(r as INavItem, (i) => (i.expanded = !expanded)),
-            )
+            reader.focusedBookTab?.setAllNavItemsExpanded(!expanded)
           },
         },
       ]}

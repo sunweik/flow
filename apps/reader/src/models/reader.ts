@@ -93,6 +93,7 @@ export class BookTab extends BaseTab {
   results?: IMatch[]
   activeResultID?: string
   rendered = false
+  tocRevision = 0
   private bookmarkLocationsRequest?: Promise<void>
 
   get container() {
@@ -411,7 +412,28 @@ export class BookTab extends BaseTab {
 
   toggle(id: string) {
     const item = find(this.nav?.toc, id) as INavItem
-    if (item) item.expanded = !item.expanded
+    if (!item) return
+
+    item.expanded = !item.expanded
+    this.tocRevision += 1
+  }
+
+  setAllNavItemsExpanded(expanded: boolean) {
+    this.nav?.toc.forEach((item) =>
+      dfs(item as INavItem, (navItem) => (navItem.expanded = expanded)),
+    )
+    this.tocRevision += 1
+  }
+
+  expandNavPath(path: INavItem[]) {
+    let changed = false
+    path.forEach((item) => {
+      if (!item.expanded) {
+        item.expanded = true
+        changed = true
+      }
+    })
+    if (changed) this.tocRevision += 1
   }
 
   toggleResult(id: string) {
