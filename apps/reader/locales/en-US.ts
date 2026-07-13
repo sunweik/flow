@@ -18,6 +18,16 @@ export default {
   'search.title': 'Search',
   'search.files.result': '{n} results in {m} sections',
 
+  'bookmark.title': 'Bookmark',
+  'bookmark.bookmarks': 'Bookmarks',
+  'bookmark.add': 'Add bookmark',
+  'bookmark.update': 'Update bookmark',
+  'bookmark.delete': 'Delete bookmark',
+
+  'reader.return_to_previous_location': 'Return to previous reading position',
+  'reader.return_to_location': 'Return to {chapter} · {percentage}%',
+  'reader.stay_here': 'Stay here',
+
   'annotation.title': 'Annotation',
   'annotation.definitions': 'Definitions',
   'annotation.annotations': 'Annotations',

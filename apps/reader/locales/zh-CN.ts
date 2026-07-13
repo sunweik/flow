@@ -18,6 +18,16 @@ export default {
   'search.title': '搜索',
   'search.files.result': '{n} 个结果在 {m} 个文件中',
 
+  'bookmark.title': '书签',
+  'bookmark.bookmarks': '书签',
+  'bookmark.add': '添加书签',
+  'bookmark.update': '更新书签',
+  'bookmark.delete': '删除书签',
+
+  'reader.return_to_previous_location': '返回之前的阅读位置',
+  'reader.return_to_location': '返回 {chapter} · {percentage}%',
+  'reader.stay_here': '留在当前位置',
+
   'annotation.title': '标注',
   'annotation.definitions': '定义',
   'annotation.annotations': '标注',

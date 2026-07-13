@@ -4,6 +4,7 @@ import Dexie, { Table } from 'dexie'
 import { PackagingMetadataObject } from '@flow/epubjs/types/packaging'
 
 import { Annotation } from './annotation'
+import { Bookmark } from './bookmark'
 import { fileToEpub } from './file'
 import { TypographyConfiguration } from './state'
 
@@ -29,6 +30,7 @@ export interface BookRecord {
   percentage?: number
   definitions: string[]
   annotations: Annotation[]
+  bookmarks: Bookmark[]
   configuration?: {
     typography?: TypographyConfiguration
   }
@@ -43,6 +45,26 @@ export class DB extends Dexie {
 
   constructor(name: string) {
     super(name)
+
+    // Keep this version so browsers that opened the reverted v7 schema can
+    // still open the database. The schema is unchanged and no data is reset.
+    this.version(7).stores({
+      books:
+        'id, name, size, metadata, createdAt, updatedAt, cfi, percentage, definitions, annotations, bookmarks, configuration',
+    })
+
+    this.version(6)
+      .stores({
+        books:
+          'id, name, size, metadata, createdAt, updatedAt, cfi, percentage, definitions, annotations, bookmarks, configuration',
+      })
+      .upgrade(async (t) => {
+        t.table('books')
+          .toCollection()
+          .modify((r) => {
+            r.bookmarks = []
+          })
+      })
 
     this.version(5).stores({
       books:

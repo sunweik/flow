@@ -18,6 +18,16 @@ export default {
   'search.title': '検索',
   'search.files.result': '{m}件中 {n}件該当',
 
+  'bookmark.title': 'ブックマーク',
+  'bookmark.bookmarks': 'ブックマーク',
+  'bookmark.add': 'ブックマークを追加',
+  'bookmark.update': 'ブックマークを更新',
+  'bookmark.delete': 'ブックマークを削除',
+
+  'reader.return_to_previous_location': '前の読書位置に戻る',
+  'reader.return_to_location': '{chapter} · {percentage}% に戻る',
+  'reader.stay_here': 'ここに留まる',
+
   'annotation.title': '注釈',
   'annotation.definitions': '定義',
   'annotation.annotations': '注釈',

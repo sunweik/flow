@@ -5,6 +5,7 @@ import { useMemo } from 'react'
 import { IconType } from 'react-icons'
 import {
   MdFormatUnderlined,
+  MdBookmark,
   MdOutlineImage,
   MdSearch,
   MdToc,
@@ -31,6 +32,7 @@ import { activeClass } from '../styles'
 import { SplitView, useSplitViewItem } from './base'
 import { Settings } from './pages'
 import { AnnotationView } from './viewlets/AnnotationView'
+import { BookmarkView } from './viewlets/BookmarkView'
 import { ImageView } from './viewlets/ImageView'
 import { SearchView } from './viewlets/SearchView'
 import { ThemeView } from './viewlets/ThemeView'
@@ -87,6 +89,13 @@ const viewActions: IViewAction[] = [
     title: 'search',
     Icon: MdSearch,
     View: SearchView,
+    env: Env.Desktop | Env.Mobile,
+  },
+  {
+    name: 'bookmark',
+    title: 'bookmark',
+    Icon: MdBookmark,
+    View: BookmarkView,
     env: Env.Desktop | Env.Mobile,
   },
   {

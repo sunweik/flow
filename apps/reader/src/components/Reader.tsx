@@ -4,10 +4,17 @@ import React, {
   ComponentProps,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
 } from 'react'
-import { MdChevronRight, MdWebAsset } from 'react-icons/md'
+import {
+  MdBookmark,
+  MdBookmarkBorder,
+  MdArrowBack,
+  MdChevronRight,
+  MdWebAsset,
+} from 'react-icons/md'
 import { RiBookLine } from 'react-icons/ri'
 import { PhotoSlider } from 'react-photo-view'
 import { useSetRecoilState } from 'recoil'
@@ -38,6 +45,7 @@ import {
   setClickedAnnotation,
   Annotations,
 } from './Annotation'
+import { IconButton } from './Button'
 import { Tab } from './Tab'
 import { TextSelectionMenu } from './TextSelectionMenu'
 import { DropZone, SplitView, useDndContext, useSplitViewItem } from './base'
@@ -423,8 +431,17 @@ interface ReaderPaneHeaderProps {
   tab: BookTab
 }
 const ReaderPaneHeader: React.FC<ReaderPaneHeaderProps> = ({ tab }) => {
-  const { location } = useSnapshot(tab)
-  const navPath = tab.getNavPath()
+  const { location, book, nav, sections } = useSnapshot(tab)
+  const navPath = useMemo(
+    () =>
+      nav && sections ? tab.getNavPathForLocation(location?.start.href) : [],
+    [location?.start.href, nav, sections, tab],
+  )
+  const t = useTranslation('bookmark')
+  const bookmark = book.bookmarks.find((bookmark) =>
+    tab.isCfiInCurrentLocation(bookmark.cfi),
+  )
+  const BookmarkIcon = bookmark ? MdBookmark : MdBookmarkBorder
 
   useEffect(() => {
     navPath.forEach((i) => (i.expanded = true))
@@ -444,8 +461,24 @@ const ReaderPaneHeader: React.FC<ReaderPaneHeaderProps> = ({ tab }) => {
         ))}
       </div>
       {location && (
-        <div className="shrink-0">
-          {location.start.displayed.page} / {location.start.displayed.total}
+        <div className="flex shrink-0 items-center gap-2">
+          <IconButton
+            className="text-red-500"
+            title={t(bookmark ? 'delete' : 'add')}
+            Icon={BookmarkIcon}
+            iconClassName="scale-y-125"
+            size={24}
+            onClick={() => {
+              if (bookmark) {
+                tab.removeBookmark(bookmark.id)
+              } else {
+                tab.putBookmark()
+              }
+            }}
+          />
+          <div>
+            {location.start.displayed.page} / {location.start.displayed.total}
+          </div>
         </div>
       )}
     </Bar>
@@ -456,27 +489,36 @@ interface FooterProps {
   tab: BookTab
 }
 const ReaderPaneFooter: React.FC<FooterProps> = ({ tab }) => {
-  const { locationToReturn, location, book } = useSnapshot(tab)
+  const { locationToReturn, locationToReturnPercentage, location, book } =
+    useSnapshot(tab)
+  const t = useTranslation('reader')
+  const returnChapter = locationToReturn ? tab.getLocationTitle() : undefined
+  const returnLabel =
+    returnChapter && locationToReturnPercentage !== undefined
+      ? t('return_to_location')
+          .replace('{chapter}', returnChapter)
+          .replace('{percentage}', (locationToReturnPercentage * 100).toFixed())
+      : t('return_to_previous_location')
 
   return (
     <Bar>
       {locationToReturn ? (
         <>
           <button
-            className={clsx(locationToReturn || 'invisible')}
+            className="flex items-center gap-1"
             onClick={() => {
-              tab.hidePrevLocation()
-              tab.display(locationToReturn.end.cfi, false)
+              tab.returnToPreviousLocation()
             }}
           >
-            Return to {locationToReturn.end.cfi}
+            <MdArrowBack size={16} />
+            {returnLabel}
           </button>
           <button
             onClick={() => {
               tab.hidePrevLocation()
             }}
           >
-            Stay
+            {t('stay_here')}
           </button>
         </>
       ) : (

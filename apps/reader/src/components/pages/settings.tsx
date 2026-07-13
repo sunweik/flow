@@ -11,7 +11,12 @@ import {
 } from '@flow/reader/hooks'
 import { localeNames } from '@flow/reader/locales'
 import { useSettings } from '@flow/reader/state'
-import { dbx, mapToToken, OAUTH_SUCCESS_MESSAGE } from '@flow/reader/sync'
+import {
+  dbx,
+  DROPBOX_SCOPES,
+  mapToToken,
+  OAUTH_SUCCESS_MESSAGE,
+} from '@flow/reader/sync'
 
 import { Button } from '../Button'
 import { Checkbox, Select } from '../Form'
@@ -124,6 +129,7 @@ const Synchronization: React.FC = () => {
                   JSON.stringify({ redirectUri }),
                   'code',
                   'offline',
+                  DROPBOX_SCOPES,
                 )
                 .then((url) => {
                   window.open(url as string, '_blank')

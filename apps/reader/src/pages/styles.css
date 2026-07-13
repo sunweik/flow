@@ -114,3 +114,7 @@ p {
 .list-row:hover .action {
   display: block;
 }
+
+.list-row:hover .action-start {
+  visibility: visible;
+}

@@ -5,18 +5,20 @@ import { IconType } from 'react-icons'
 
 interface IconButtonProps extends ComponentProps<'button'> {
   Icon: IconType
+  iconClassName?: string
   size?: number
 }
 export function IconButton({
   className,
   Icon,
+  iconClassName,
   size = 16,
   ...props
 }: IconButtonProps) {
   return (
     <button className={clsx('relative block p-0.5', className)} {...props}>
       <StateLayer />
-      <Icon size={size} />
+      <Icon className={iconClassName} size={size} />
     </button>
   )
 }

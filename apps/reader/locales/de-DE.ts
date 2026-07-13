@@ -18,6 +18,16 @@ export default {
   'search.title': 'Suchen',
   'search.files.result': '{n} Ergebnisse in {m} Abschnitten',
 
+  'bookmark.title': 'Lesezeichen',
+  'bookmark.bookmarks': 'Lesezeichen',
+  'bookmark.add': 'Lesezeichen hinzufügen',
+  'bookmark.update': 'Lesezeichen aktualisieren',
+  'bookmark.delete': 'Lesezeichen löschen',
+
+  'reader.return_to_previous_location': 'Zur vorherigen Leseposition',
+  'reader.return_to_location': 'Zurück zu {chapter} · {percentage}%',
+  'reader.stay_here': 'Hier bleiben',
+
   'annotation.title': 'Anmerkung',
   'annotation.definitions': 'Definitionen',
   'annotation.annotations': 'Anmerkungen',

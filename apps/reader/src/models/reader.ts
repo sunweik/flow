@@ -9,6 +9,7 @@ import Navigation, { NavItem } from '@flow/epubjs/types/navigation'
 import Section from '@flow/epubjs/types/section'
 
 import { AnnotationColor, AnnotationType } from '../annotation'
+import { Bookmark } from '../bookmark'
 import { BookRecord, db } from '../db'
 import { fileToEpub } from '../file'
 import { defaultStyle } from '../styles'
@@ -61,6 +62,11 @@ interface TimelineItem {
   timestamp: number
 }
 
+interface LocationHistoryItem {
+  location: Location
+  percentage?: number
+}
+
 class BaseTab {
   constructor(public readonly id: string, public readonly title = id) {}
 
@@ -81,12 +87,13 @@ export class BookTab extends BaseTab {
   iframe?: Window & AsRef
   rendition?: Rendition & { manager?: any }
   nav?: Navigation
-  locationToReturn?: Location
+  locationHistory: LocationHistoryItem[] = []
   section?: ISection
   sections?: ISection[]
   results?: IMatch[]
   activeResultID?: string
   rendered = false
+  private bookmarkLocationsRequest?: Promise<void>
 
   get container() {
     return this?.rendition?.manager?.container as HTMLDivElement | undefined
@@ -97,10 +104,71 @@ export class BookTab extends BaseTab {
     return this.timeline[0]?.location
   }
 
+  get locationToReturn() {
+    return this.locationHistory[this.locationHistory.length - 1]?.location
+  }
+
+  get locationToReturnPercentage() {
+    return this.locationHistory[this.locationHistory.length - 1]?.percentage
+  }
+
   display(target?: string, returnable = true) {
     this.rendition?.display(target)
     if (returnable) this.showPrevLocation()
   }
+
+  private bookmarkDisplayRequest = 0
+
+  private waitForRelocated(rendition: Rendition) {
+    return new Promise<Location | undefined>((resolve) => {
+      const onRelocated = (location: Location) => {
+        clearTimeout(timeout)
+        rendition.off('relocated', onRelocated)
+        resolve(location)
+      }
+      const timeout = setTimeout(() => {
+        rendition.off('relocated', onRelocated)
+        resolve(undefined)
+      }, 2000)
+
+      rendition.on('relocated', onRelocated)
+    })
+  }
+
+  private async displayAndWaitForRelocation(
+    rendition: Rendition,
+    target: string,
+  ) {
+    const relocated = this.waitForRelocated(rendition)
+    try {
+      await rendition.display(target)
+      return await relocated
+    } catch (error) {
+      console.warn('Could not display bookmark', error)
+    }
+  }
+
+  async displayBookmark(target: string) {
+    const rendition = this.rendition
+    if (!rendition) return
+
+    const request = ++this.bookmarkDisplayRequest
+    this.showPrevLocation()
+    await this.displayAndWaitForRelocation(rendition, target)
+
+    // Opening a sidebar can trigger another pagination immediately after the
+    // first relocation. Wait for that layout pass before verifying the CFI.
+    await new Promise<void>((resolve) => setTimeout(resolve, 150))
+    if (
+      request !== this.bookmarkDisplayRequest ||
+      this.isCfiInCurrentLocation(target)
+    ) {
+      return
+    }
+
+    await this.displayAndWaitForRelocation(rendition, target)
+  }
+
   displayFromSelector(selector: string, section: ISection, returnable = true) {
     try {
       const el = section.document.querySelector(selector)
@@ -209,6 +277,121 @@ export class BookTab extends BaseTab {
     })
   }
 
+  getCurrentBookmark() {
+    return this.book.bookmarks.find((bookmark) =>
+      this.isCfiInCurrentLocation(bookmark.cfi),
+    )
+  }
+
+  isCfiInCurrentLocation(cfi: string) {
+    const location = this.location
+    if (!location) return false
+    if (cfi === location.start.cfi) return true
+
+    const epubcfi = this.rendition?.epubcfi
+    if (!epubcfi) return false
+
+    try {
+      return (
+        epubcfi.compare(location.start.cfi, cfi) <= 0 &&
+        epubcfi.compare(cfi, location.end.cfi) <= 0
+      )
+    } catch {
+      return false
+    }
+  }
+
+  putBookmark() {
+    const location = this.location
+    const spine = this.section
+    if (!location || !spine) return
+
+    const existing = this.getCurrentBookmark()
+    const now = Date.now()
+    const bookmark: Bookmark = {
+      id: existing?.id ?? uuidv4(),
+      bookId: this.book.id,
+      cfi: location.start.cfi,
+      href: location.start.href,
+      spine: {
+        index: spine.index,
+        title:
+          this.getSectionTitle(spine, location.start.href) ??
+          location.start.href,
+      },
+      displayed: {
+        page: location.start.displayed.page,
+        total: location.start.displayed.total,
+      },
+      percentage:
+        this.book.percentage ??
+        this.getGeneratedBookmarkPercentage(location.start.cfi),
+      createdAt: existing?.createdAt ?? now,
+      updatedAt: now,
+    }
+
+    const bookmarks = [...snapshot(this.book.bookmarks)]
+    const i = bookmarks.findIndex((b) => b.id === bookmark.id)
+    if (i < 0) {
+      bookmarks.push(bookmark)
+    } else {
+      bookmarks.splice(i, 1, bookmark)
+    }
+
+    this.updateBook({ bookmarks })
+  }
+
+  removeBookmark(id: string) {
+    return this.updateBook({
+      bookmarks: snapshot(this.book.bookmarks).filter((b) => b.id !== id),
+    })
+  }
+
+  private getGeneratedBookmarkPercentage(cfi: string) {
+    try {
+      const percentage = this.epub?.locations.percentageFromCfi(cfi)
+      return typeof percentage === 'number' && Number.isFinite(percentage)
+        ? Math.min(1, Math.max(0, percentage))
+        : undefined
+    } catch {
+      return undefined
+    }
+  }
+
+  async populateMissingBookmarkPercentages() {
+    const epub = this.epub
+    if (
+      !epub ||
+      !this.book.bookmarks.some((bookmark) => bookmark.percentage === undefined)
+    ) {
+      return
+    }
+
+    try {
+      if (!epub.locations.length()) {
+        this.bookmarkLocationsRequest ??= ref(
+          epub.locations.generate(1024).then(() => undefined),
+        )
+        await this.bookmarkLocationsRequest
+      }
+
+      let changed = false
+      const bookmarks = snapshot(this.book.bookmarks).map((bookmark) => {
+        if (bookmark.percentage !== undefined) return bookmark
+
+        const percentage = this.getGeneratedBookmarkPercentage(bookmark.cfi)
+        if (percentage === undefined) return bookmark
+
+        changed = true
+        return { ...bookmark, percentage }
+      })
+
+      if (changed) this.updateBook({ bookmarks })
+    } catch (error) {
+      console.warn('Could not calculate bookmark percentages', error)
+    }
+  }
+
   keyword = ''
   setKeyword(keyword: string) {
     if (this.keyword === keyword) return
@@ -237,11 +420,40 @@ export class BookTab extends BaseTab {
   }
 
   showPrevLocation() {
-    this.locationToReturn = this.location
+    const location = this.location
+    if (!location) return
+
+    const previous = this.locationHistory[this.locationHistory.length - 1]
+    if (previous?.location.start.cfi === location.start.cfi) return
+
+    this.locationHistory.push({
+      location,
+      percentage: this.book.percentage,
+    })
+    if (this.locationHistory.length > 100) this.locationHistory.shift()
   }
 
   hidePrevLocation() {
-    this.locationToReturn = undefined
+    this.locationHistory.splice(0)
+  }
+
+  returnToPreviousLocation() {
+    const previous = this.locationHistory.pop()
+    if (!previous) return
+
+    this.display(previous.location.end.cfi, false)
+  }
+
+  getLocationTitle(location = this.locationToReturn) {
+    const href = location?.start.href
+    if (!href) return
+
+    const section = this.sections?.find((section) =>
+      compareHref(section.href, href),
+    )
+    const title = this.getSectionTitle(section, href)
+
+    return title === href ? undefined : title
   }
 
   mapSectionToNavItem(sectionHref: string) {
@@ -252,6 +464,31 @@ export class BookTab extends BaseTab {
       }),
     )
     return navItem
+  }
+
+  getSectionTitle(section = this.section, href = section?.href) {
+    const navTitle =
+      section?.navitem?.label.trim() ||
+      (href && this.mapSectionToNavItem(href)?.label.trim())
+    if (navTitle) return navTitle
+
+    const headings = [...(section?.document.querySelectorAll('h1,h2,h3') ?? [])]
+      .map((heading) => heading.textContent?.replace(/\s+/g, ' ').trim())
+      .filter((heading): heading is string => !!heading)
+
+    const firstHeading = headings[0]
+    if (firstHeading) {
+      const isShortChapterHeading =
+        /^(chapter|part|book)\b/i.test(firstHeading) &&
+        firstHeading.split(/\s+/).length <= 3
+
+      if (isShortChapterHeading && headings[1]) {
+        return `${firstHeading} ${headings[1]}`
+      }
+      return firstHeading
+    }
+
+    return section?.document.title.trim() || href
   }
 
   get currentHref() {
@@ -283,6 +520,30 @@ export class BookTab extends BaseTab {
     }
 
     return path
+  }
+
+  getNavPathForLocation(href = this.location?.start.href) {
+    if (href) {
+      const navItem = this.mapSectionToNavItem(href)
+      const path = this.getNavPath(navItem)
+      if (path.length) return path
+    }
+
+    const sectionIndex = this.sections?.findIndex((section) =>
+      compareHref(section.href, href),
+    )
+    if (sectionIndex !== undefined && sectionIndex >= 0) {
+      for (let index = sectionIndex; index >= 0; index -= 1) {
+        const section = this.sections?.[index]
+        const navItem =
+          section?.navitem ||
+          (section?.href ? this.mapSectionToNavItem(section.href) : undefined)
+        const path = this.getNavPath(navItem)
+        if (path.length) return path
+      }
+    }
+
+    return this.getNavPath()
   }
 
   searchInSection(keyword = this.keyword, section = this.section) {
@@ -336,6 +597,7 @@ export class BookTab extends BaseTab {
     if (!file) return
 
     this.epub = ref(await fileToEpub(file.file))
+    void this.populateMissingBookmarkPercentages()
 
     this.epub.loaded.navigation.then((nav) => {
       this.nav = nav

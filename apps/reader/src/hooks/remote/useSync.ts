@@ -2,14 +2,20 @@ import { useCallback, useEffect } from 'react'
 import { useSnapshot } from 'valtio'
 
 import { Annotation } from '@flow/reader/annotation'
+import { Bookmark } from '@flow/reader/bookmark'
 import { BookRecord } from '@flow/reader/db'
 import { BookTab } from '@flow/reader/models'
-import { uploadData } from '@flow/reader/sync'
+import {
+  toDropboxBookmarkFile,
+  uploadBookmarks,
+  uploadData,
+} from '@flow/reader/sync'
 
-import { useRemoteBooks } from './useRemote'
+import { useRemoteBookmarks, useRemoteBooks } from './useRemote'
 
 export function useSync(tab: BookTab) {
   const { mutate } = useRemoteBooks()
+  const { mutate: mutateRemoteBookmarks } = useRemoteBookmarks()
   const { location, book } = useSnapshot(tab)
 
   const id = tab.book.id
@@ -57,6 +63,30 @@ export function useSync(tab: BookTab) {
       annotations: book.annotations as Annotation[],
     })
   }, [book.annotations, sync])
+
+  useEffect(() => {
+    const localBook = {
+      id,
+      name: book.name,
+      bookmarks: book.bookmarks as Bookmark[],
+    }
+
+    mutateRemoteBookmarks(
+      (remoteBookmarkFiles) => {
+        if (!remoteBookmarkFiles) return
+
+        uploadBookmarks(localBook)
+        const bookmarkFile = toDropboxBookmarkFile(localBook)
+        const i = remoteBookmarkFiles.findIndex((file) => file.bookId === id)
+
+        if (i < 0) return [...remoteBookmarkFiles, bookmarkFile]
+        return remoteBookmarkFiles.map((file, index) =>
+          index === i ? bookmarkFile : file,
+        )
+      },
+      { revalidate: false },
+    )
+  }, [book.bookmarks, book.name, id, mutateRemoteBookmarks])
 
   useEffect(() => {
     sync({

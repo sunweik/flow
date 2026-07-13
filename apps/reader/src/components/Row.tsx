@@ -20,6 +20,7 @@ interface RowProps extends ComponentProps<'div'> {
   toggle?: () => void
   onActivate?: () => void
   onDelete?: () => void
+  deletePosition?: 'start' | 'end'
   badge?: boolean
 }
 export const Row: React.FC<RowProps> = ({
@@ -38,6 +39,7 @@ export const Row: React.FC<RowProps> = ({
   badge,
   onClick,
   onDelete,
+  deletePosition = 'end',
   ...props
 }) => {
   const trans = useTranslation()
@@ -68,6 +70,18 @@ export const Row: React.FC<RowProps> = ({
       {...props}
     >
       <StateLayer />
+      {onDelete && deletePosition === 'start' && (
+        <div className="flex w-5 shrink-0 items-center justify-center">
+          <IconButton
+            className="action-start invisible"
+            Icon={MdClose}
+            onClick={(e) => {
+              e.stopPropagation()
+              onDelete()
+            }}
+          />
+        </div>
+      )}
       <Twisty
         expanded={expanded}
         className={clsx(!childCount && 'invisible')}
@@ -78,7 +92,7 @@ export const Row: React.FC<RowProps> = ({
       />
       <div
         className={clsx(
-          'typescale-body-small truncate',
+          'typescale-body-small min-w-0 truncate',
           t ? 'text-on-surface-variant' : 'text-outline/60',
         )}
         style={{
@@ -99,7 +113,7 @@ export const Row: React.FC<RowProps> = ({
           </span>
         )}
       </div>
-      <div className="ml-auto">
+      <div className="ml-auto flex shrink-0 items-center">
         {badge && childCount && (
           <div
             className="bg-tertiary-container text-on-tertiary-container rounded-full px-1.5 py-px"
@@ -110,7 +124,7 @@ export const Row: React.FC<RowProps> = ({
             {childCount}
           </div>
         )}
-        {onDelete && (
+        {onDelete && deletePosition === 'end' && (
           <IconButton
             className="action hidden"
             Icon={MdClose}

@@ -3,7 +3,7 @@ import clsx from 'clsx'
 import { useLiveQuery } from 'dexie-react-hooks'
 import Head from 'next/head'
 import { useRouter } from 'next/router'
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import {
   MdCheckBox,
   MdCheckBoxOutlineBlank,
@@ -21,13 +21,23 @@ import {
   useDisablePinchZooming,
   useLibrary,
   useMobile,
+  useRemoteBookmarks,
   useRemoteBooks,
   useRemoteFiles,
   useTranslation,
 } from '../hooks'
 import { reader, useReaderSnapshot } from '../models'
 import { lock } from '../styles'
-import { dbx, pack, uploadData } from '../sync'
+import {
+  dbx,
+  enqueueDropboxWrite,
+  getDropboxBookmarkPath,
+  mergeBooksWithBookmarks,
+  pack,
+  toDropboxBookmarkFile,
+  uploadBookmarks,
+  uploadData,
+} from '../sync'
 import { copy } from '../utils'
 
 const placeholder = `data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><rect fill="gray" fill-opacity="0" width="1" height="1"/></svg>`
@@ -101,9 +111,11 @@ const Library: React.FC = () => {
   const t = useTranslation('home')
 
   const { data: remoteBooks, mutate: mutateRemoteBooks } = useRemoteBooks()
+  const { data: remoteBookmarks, mutate: mutateRemoteBookmarks } =
+    useRemoteBookmarks()
   const { data: remoteFiles, mutate: mutateRemoteFiles } = useRemoteFiles()
-  const previousRemoteBooks = usePrevious(remoteBooks)
   const previousRemoteFiles = usePrevious(remoteFiles)
+  const initializedRemoteData = useRef(false)
 
   const [select, toggleSelect] = useBoolean(false)
   const [selectedBookIds, { add, has, toggle, reset }] = useSet<string>()
@@ -131,11 +143,46 @@ const Library: React.FC = () => {
   }, [mutateRemoteBooks, remoteFiles])
 
   useEffect(() => {
-    if (!previousRemoteBooks && remoteBooks) {
-      db?.books.bulkPut(remoteBooks).then(() => setReadyToSync(true))
+    if (!initializedRemoteData.current && remoteBooks && remoteBookmarks) {
+      initializedRemoteData.current = true
+      db?.books.toArray().then((localBooks) => {
+        const { books: mergedBooks, bookmarkChanges } = mergeBooksWithBookmarks(
+          localBooks,
+          remoteBooks,
+          remoteBookmarks,
+        )
+
+        db?.books.bulkPut(mergedBooks).then(() => {
+          setReadyToSync(true)
+
+          if (bookmarkChanges.length) {
+            Promise.all(bookmarkChanges.map(uploadBookmarks))
+            mutateRemoteBookmarks(
+              (files = []) => {
+                const changes = new Map(
+                  bookmarkChanges.map((book) => [
+                    book.id,
+                    toDropboxBookmarkFile(book),
+                  ]),
+                )
+                return [
+                  ...files.filter((file) => !changes.has(file.bookId)),
+                  ...changes.values(),
+                ]
+              },
+              { revalidate: false },
+            )
+          }
+
+          if (remoteBooks.some((book) => book.bookmarks.length > 0)) {
+            uploadData(mergedBooks)
+            mutateRemoteBooks(mergedBooks, { revalidate: false })
+          }
+        })
+      })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [remoteBooks])
+  }, [mutateRemoteBookmarks, mutateRemoteBooks, remoteBookmarks, remoteBooks])
 
   useEffect(() => {
     if (!remoteFiles || !readyToSync) return
@@ -261,10 +308,13 @@ const Library: React.FC = () => {
                       if (!file) continue
 
                       setLoading(book.id)
-                      await dbx.filesUpload({
-                        path: `/files/${book.name}`,
-                        contents: file.file,
-                      })
+                      await enqueueDropboxWrite(() =>
+                        dbx.filesUpload({
+                          path: `/files/${book.name}`,
+                          contents: file.file,
+                        }),
+                      )
+                      await uploadBookmarks(book)
                       setLoading(undefined)
 
                       mutateRemoteFiles()
@@ -285,11 +335,21 @@ const Library: React.FC = () => {
                     // folder data is not updated after `filesDeleteBatch`
                     mutateRemoteFiles(
                       async (data) => {
-                        await dbx.filesDeleteBatch({
-                          entries: selectedBooks.map((b) => ({
-                            path: `/files/${b.name}`,
-                          })),
-                        })
+                        await enqueueDropboxWrite(() =>
+                          dbx.filesDeleteBatch({
+                            entries: selectedBooks.flatMap((book) => [
+                              { path: `/files/${book.name}` },
+                              { path: getDropboxBookmarkPath(book.id) },
+                            ]),
+                          }),
+                        )
+                        mutateRemoteBookmarks(
+                          (files) =>
+                            files?.filter(
+                              (file) => !bookIds.includes(file.bookId),
+                            ),
+                          { revalidate: false },
+                        )
                         return data?.filter(
                           (f) => !selectedBooks.find((b) => b.name === f.name),
                         )
