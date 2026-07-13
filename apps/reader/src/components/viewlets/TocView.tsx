@@ -55,12 +55,18 @@ const LibraryPane: React.FC = () => {
 const TocPane: React.FC = () => {
   const t = useTranslation()
   const { focusedBookTab } = useReaderSnapshot()
+  const tab = reader.focusedBookTab
   const toc = focusedBookTab?.nav?.toc as INavItem[] | undefined
   const tocRevision = focusedBookTab?.tocRevision
   const rows =
     tocRevision === undefined ? undefined : toc?.flatMap((i) => flatTree(i))
   const expanded = toc?.some((r) => r.expanded)
-  const currentNavItem = focusedBookTab?.currentNavItem
+  const currentHref = focusedBookTab?.location?.start.href
+  const navigationReady = !!toc && !!focusedBookTab?.sections
+  const currentNavPath = navigationReady
+    ? tab?.getNavPathForLocation(currentHref) ?? []
+    : []
+  const currentNavItem = currentNavPath[currentNavPath.length - 1]
 
   const { outerRef, innerRef, items, scrollToItem } = useList(rows)
 
@@ -84,7 +90,7 @@ const TocPane: React.FC = () => {
           {items.map(({ index }) => (
             <TocRow
               key={index}
-              currentNavItem={currentNavItem as INavItem}
+              currentNavItem={currentNavItem}
               item={rows[index]}
               onActivate={() => scrollToItem(index)}
             />
@@ -113,7 +119,7 @@ const TocRow: React.FC<TocRowProps> = ({
     <Row
       title={label.trim()}
       depth={depth}
-      active={href === currentNavItem?.href}
+      active={id === currentNavItem?.id}
       expanded={expanded}
       subitems={subitems}
       onClick={() => {
