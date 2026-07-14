@@ -24,6 +24,7 @@ import {
   useRemoteBookmarks,
   useRemoteBooks,
   useRemoteFiles,
+  useRemoteNotes,
   useTranslation,
 } from '../hooks'
 import { reader, useReaderSnapshot } from '../models'
@@ -32,11 +33,13 @@ import {
   dbx,
   enqueueDropboxWrite,
   getDropboxBookmarkPath,
-  mergeBooksWithBookmarks,
+  getDropboxNotePath,
+  mergeBooksWithDropboxData,
   pack,
   toDropboxBookmarkFile,
   uploadBookmarks,
   uploadData,
+  uploadNotes,
 } from '../sync'
 import { copy } from '../utils'
 
@@ -113,6 +116,7 @@ const Library: React.FC = () => {
   const { data: remoteBooks, mutate: mutateRemoteBooks } = useRemoteBooks()
   const { data: remoteBookmarks, mutate: mutateRemoteBookmarks } =
     useRemoteBookmarks()
+  const { data: remoteNotes, mutate: mutateRemoteNotes } = useRemoteNotes()
   const { data: remoteFiles, mutate: mutateRemoteFiles } = useRemoteFiles()
   const previousRemoteFiles = usePrevious(remoteFiles)
   const initializedRemoteData = useRef(false)
@@ -143,14 +147,21 @@ const Library: React.FC = () => {
   }, [mutateRemoteBooks, remoteFiles])
 
   useEffect(() => {
-    if (!initializedRemoteData.current && remoteBooks && remoteBookmarks) {
+    if (
+      !initializedRemoteData.current &&
+      remoteBooks &&
+      remoteBookmarks &&
+      remoteNotes
+    ) {
       initializedRemoteData.current = true
       db?.books.toArray().then((localBooks) => {
-        const { books: mergedBooks, bookmarkChanges } = mergeBooksWithBookmarks(
-          localBooks,
-          remoteBooks,
-          remoteBookmarks,
-        )
+        const { books: mergedBooks, bookmarkChanges } =
+          mergeBooksWithDropboxData(
+            localBooks,
+            remoteBooks,
+            remoteBookmarks,
+            remoteNotes,
+          )
 
         db?.books.bulkPut(mergedBooks).then(() => {
           setReadyToSync(true)
@@ -174,7 +185,7 @@ const Library: React.FC = () => {
             )
           }
 
-          if (remoteBooks.some((book) => book.bookmarks.length > 0)) {
+          if (bookmarkChanges.length) {
             uploadData(mergedBooks)
             mutateRemoteBooks(mergedBooks, { revalidate: false })
           }
@@ -182,7 +193,13 @@ const Library: React.FC = () => {
       })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mutateRemoteBookmarks, mutateRemoteBooks, remoteBookmarks, remoteBooks])
+  }, [
+    mutateRemoteBookmarks,
+    mutateRemoteBooks,
+    remoteBookmarks,
+    remoteBooks,
+    remoteNotes,
+  ])
 
   useEffect(() => {
     if (!remoteFiles || !readyToSync) return
@@ -315,6 +332,7 @@ const Library: React.FC = () => {
                         }),
                       )
                       await uploadBookmarks(book)
+                      await uploadNotes(book)
                       setLoading(undefined)
 
                       mutateRemoteFiles()
@@ -340,10 +358,18 @@ const Library: React.FC = () => {
                             entries: selectedBooks.flatMap((book) => [
                               { path: `/files/${book.name}` },
                               { path: getDropboxBookmarkPath(book.id) },
+                              { path: getDropboxNotePath(book.id) },
                             ]),
                           }),
                         )
                         mutateRemoteBookmarks(
+                          (files) =>
+                            files?.filter(
+                              (file) => !bookIds.includes(file.bookId),
+                            ),
+                          { revalidate: false },
+                        )
+                        mutateRemoteNotes(
                           (files) =>
                             files?.filter(
                               (file) => !bookIds.includes(file.bookId),

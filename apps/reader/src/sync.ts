@@ -3,6 +3,7 @@ import { saveAs } from 'file-saver'
 import JSZip from 'jszip'
 import { parseCookies } from 'nookies'
 
+import { Annotation } from './annotation'
 import { Bookmark } from './bookmark'
 import { BookRecord, db } from './db'
 import { readBlob } from './file'
@@ -61,7 +62,9 @@ dbx.auth.refreshAccessToken = () => {
   return _req
 }
 
-interface SerializedBookRecord extends Omit<BookRecord, 'bookmarks'> {
+interface SerializedBookRecord
+  extends Omit<BookRecord, 'annotations' | 'bookmarks'> {
+  annotations?: Annotation[]
   bookmarks?: Bookmark[]
 }
 
@@ -78,9 +81,17 @@ export interface DropboxBookmarkFile {
   bookmarks: Bookmark[]
 }
 
+export interface DropboxNoteFile {
+  version: number
+  bookId: string
+  bookName?: string
+  annotations: Annotation[]
+}
+
 const VERSION = 1
 export const DATA_FILENAME = 'data.json'
 export const BOOKMARKS_PATH = '/bookmarks'
+export const NOTES_PATH = '/notes'
 
 function normalizeBookRecord(book: SerializedBookRecord): BookRecord {
   return {
@@ -112,15 +123,19 @@ function haveBookmarksChanged(a: Bookmark[] = [], b: Bookmark[] = []) {
   return JSON.stringify(a) !== JSON.stringify(b)
 }
 
-export function mergeBooksWithBookmarks(
+export function mergeBooksWithDropboxData(
   localBooks: BookRecord[],
   remoteBooks: BookRecord[],
   remoteBookmarkFiles: DropboxBookmarkFile[] = [],
+  remoteNoteFiles: DropboxNoteFile[] = [],
 ) {
   const bookmarkChanges: BookRecord[] = []
   const localById = new Map(localBooks.map((book) => [book.id, book]))
   const remoteBookmarksByBookId = new Map(
     remoteBookmarkFiles.map((file) => [file.bookId, file.bookmarks]),
+  )
+  const remoteNotesByBookId = new Map(
+    remoteNoteFiles.map((file) => [file.bookId, file.annotations]),
   )
 
   const books = remoteBooks.map((remoteBook) => {
@@ -131,9 +146,11 @@ export function mergeBooksWithBookmarks(
       ? remoteBookmarksByBookId.get(remote.id)!
       : remote.bookmarks
     const bookmarks = mergeBookmarks(local?.bookmarks, syncedBookmarks)
+    const annotations = remoteNotesByBookId.get(remote.id) ?? []
 
     const book = {
       ...remote,
+      annotations,
       bookmarks,
     }
     if (
@@ -142,20 +159,22 @@ export function mergeBooksWithBookmarks(
     ) {
       bookmarkChanges.push(book)
     }
-
     return book
   })
 
-  return { books, changed: bookmarkChanges.length > 0, bookmarkChanges }
+  return { books, bookmarkChanges }
 }
 
-function serializeData(books?: BookRecord[], includeBookmarks = true) {
+function serializeData(books?: BookRecord[], includeBookData = true) {
   return JSON.stringify({
     version: VERSION,
     dbVersion: db?.verno,
     books: books?.map((book) => {
       const serialized: Partial<BookRecord> = normalizeBookRecord(book)
-      if (!includeBookmarks) delete serialized.bookmarks
+      if (!includeBookData) {
+        delete serialized.annotations
+        delete serialized.bookmarks
+      }
       return serialized
     }),
   })
@@ -197,6 +216,21 @@ export function toDropboxBookmarkFile(
 
 export function getDropboxBookmarkPath(bookId: string) {
   return `${BOOKMARKS_PATH}/${bookId}.json`
+}
+
+export function toDropboxNoteFile(
+  book: Pick<BookRecord, 'id' | 'name' | 'annotations'>,
+): DropboxNoteFile {
+  return {
+    version: VERSION,
+    bookId: book.id,
+    bookName: book.name,
+    annotations: book.annotations as Annotation[],
+  }
+}
+
+export function getDropboxNotePath(bookId: string) {
+  return `${NOTES_PATH}/${bookId}.json`
 }
 
 let bookmarksFolderReady = false
@@ -243,6 +277,42 @@ export async function uploadBookmarks(
   })
 }
 
+let notesFolderReady = false
+let notesFolderRequest: Promise<void> | undefined
+
+async function ensureNotesFolder() {
+  if (notesFolderReady) return
+  if (notesFolderRequest) return notesFolderRequest
+
+  notesFolderRequest = dbx
+    .filesCreateFolderV2({ path: NOTES_PATH })
+    .then(() => undefined)
+    .catch((error) => {
+      if (!hasDropboxError(error, 'conflict')) throw error
+    })
+    .then(() => {
+      notesFolderReady = true
+    })
+    .finally(() => {
+      notesFolderRequest = undefined
+    })
+
+  return notesFolderRequest
+}
+
+export async function uploadNotes(
+  book: Pick<BookRecord, 'id' | 'name' | 'annotations'>,
+) {
+  return enqueueDropboxWrite(async () => {
+    await ensureNotesFolder()
+    return dbx.filesUpload({
+      path: getDropboxNotePath(book.id),
+      mode: { '.tag': 'overwrite' },
+      contents: JSON.stringify(toDropboxNoteFile(book)),
+    })
+  })
+}
+
 export const dropboxFilesFetcher = (path: string) => {
   return dbx.filesListFolder({ path }).then((d) => d.result.entries)
 }
@@ -280,6 +350,32 @@ export const dropboxBookmarksFetcher = async () => {
             return readBlob((r) => r.readAsText(blob))
           })
           .then((text) => JSON.parse(text) as DropboxBookmarkFile),
+      ),
+  )
+}
+
+export const dropboxNotesFetcher = async () => {
+  let entries
+  try {
+    entries = (await dbx.filesListFolder({ path: NOTES_PATH })).result.entries
+  } catch (error) {
+    if (hasDropboxError(error, 'not_found')) return []
+    throw error
+  }
+
+  return Promise.all(
+    entries
+      .filter(
+        (entry) => entry['.tag'] === 'file' && entry.name.endsWith('.json'),
+      )
+      .map((entry) =>
+        dbx
+          .filesDownload({ path: entry.path_lower! })
+          .then((d) => {
+            const blob: Blob = (d.result as any).fileBlob
+            return readBlob((r) => r.readAsText(blob))
+          })
+          .then((text) => JSON.parse(text) as DropboxNoteFile),
       ),
   )
 }

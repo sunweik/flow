@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react'
+import { useCallback, useEffect, useRef } from 'react'
 import { useSnapshot } from 'valtio'
 
 import { Annotation } from '@flow/reader/annotation'
@@ -7,15 +7,18 @@ import { BookRecord } from '@flow/reader/db'
 import { BookTab } from '@flow/reader/models'
 import {
   toDropboxBookmarkFile,
+  toDropboxNoteFile,
   uploadBookmarks,
   uploadData,
+  uploadNotes,
 } from '@flow/reader/sync'
 
-import { useRemoteBookmarks, useRemoteBooks } from './useRemote'
+import { useRemoteBookmarks, useRemoteBooks, useRemoteNotes } from './useRemote'
 
 export function useSync(tab: BookTab) {
   const { mutate } = useRemoteBooks()
   const { mutate: mutateRemoteBookmarks } = useRemoteBookmarks()
+  const { data: remoteNotes, mutate: mutateRemoteNotes } = useRemoteNotes()
   const { location, book } = useSnapshot(tab)
 
   const id = tab.book.id
@@ -58,11 +61,9 @@ export function useSync(tab: BookTab) {
     })
   }, [book.definitions, sync])
 
-  useEffect(() => {
-    sync({
-      annotations: book.annotations as Annotation[],
-    })
-  }, [book.annotations, sync])
+  const annotationsSignature = JSON.stringify(book.annotations)
+  const previousAnnotationsSignature = useRef(annotationsSignature)
+  const annotationsSyncPending = useRef(false)
 
   useEffect(() => {
     const localBook = {
@@ -87,6 +88,46 @@ export function useSync(tab: BookTab) {
       { revalidate: false },
     )
   }, [book.bookmarks, book.name, id, mutateRemoteBookmarks])
+
+  useEffect(() => {
+    if (previousAnnotationsSignature.current !== annotationsSignature) {
+      previousAnnotationsSignature.current = annotationsSignature
+      annotationsSyncPending.current = true
+    }
+    if (!annotationsSyncPending.current || !remoteNotes) return
+
+    const localBook = {
+      id,
+      name: book.name,
+      annotations: book.annotations as Annotation[],
+    }
+
+    mutateRemoteNotes(
+      async (remoteNoteFiles) => {
+        if (!remoteNoteFiles) return
+
+        const uploaded = await uploadNotes(localBook)
+        if (!uploaded) return remoteNoteFiles
+
+        annotationsSyncPending.current = false
+        const noteFile = toDropboxNoteFile(localBook)
+        const i = remoteNoteFiles.findIndex((file) => file.bookId === id)
+
+        if (i < 0) return [...remoteNoteFiles, noteFile]
+        return remoteNoteFiles.map((file, index) =>
+          index === i ? noteFile : file,
+        )
+      },
+      { revalidate: false },
+    )
+  }, [
+    annotationsSignature,
+    book.annotations,
+    book.name,
+    id,
+    mutateRemoteNotes,
+    remoteNotes,
+  ])
 
   useEffect(() => {
     sync({
