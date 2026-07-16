@@ -37,6 +37,7 @@ import {
   mergeBooksWithDropboxData,
   pack,
   toDropboxBookmarkFile,
+  toDropboxNoteFile,
   uploadBookmarks,
   uploadData,
   uploadNotes,
@@ -155,7 +156,7 @@ const Library: React.FC = () => {
     ) {
       initializedRemoteData.current = true
       db?.books.toArray().then((localBooks) => {
-        const { books: mergedBooks, bookmarkChanges } =
+        const { books: mergedBooks, bookmarkChanges, annotationChanges } =
           mergeBooksWithDropboxData(
             localBooks,
             remoteBooks,
@@ -185,6 +186,25 @@ const Library: React.FC = () => {
             )
           }
 
+          if (annotationChanges.length) {
+            Promise.all(annotationChanges.map(uploadNotes))
+            mutateRemoteNotes(
+              (files = []) => {
+                const changes = new Map(
+                  annotationChanges.map((book) => [
+                    book.id,
+                    toDropboxNoteFile(book),
+                  ]),
+                )
+                return [
+                  ...files.filter((file) => !changes.has(file.bookId)),
+                  ...changes.values(),
+                ]
+              },
+              { revalidate: false },
+            )
+          }
+
           if (bookmarkChanges.length) {
             uploadData(mergedBooks)
             mutateRemoteBooks(mergedBooks, { revalidate: false })
@@ -196,6 +216,7 @@ const Library: React.FC = () => {
   }, [
     mutateRemoteBookmarks,
     mutateRemoteBooks,
+    mutateRemoteNotes,
     remoteBookmarks,
     remoteBooks,
     remoteNotes,

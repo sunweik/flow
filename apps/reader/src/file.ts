@@ -52,6 +52,7 @@ export async function addBook(file: File) {
     createdAt: Date.now(),
     definitions: [],
     annotations: [],
+    annotationTombstones: {},
     bookmarks: [],
   }
   db?.books.add(book)

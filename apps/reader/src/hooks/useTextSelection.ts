@@ -1,7 +1,7 @@
 // https://github.com/juliankrispel/use-text-selection
 
 import { useEventListener } from '@literal-ui/hooks'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { isTouchScreen } from '../platform'
 
@@ -10,15 +10,19 @@ import { useForceRender } from './useForceRender'
 export function hasSelection(
   selection?: Selection | null,
 ): selection is Selection {
-  return !(!selection || selection.isCollapsed)
+  return !!selection && selection.rangeCount > 0 && !selection.isCollapsed
 }
 
 // https://htmldom.dev/get-the-direction-of-the-text-selection/
 export function isForwardSelection(selection: Selection) {
-  if (selection.anchorNode && selection.focusNode) {
-    const range = document.createRange()
-    range.setStart(selection.anchorNode, selection.anchorOffset)
-    range.setEnd(selection.focusNode, selection.focusOffset)
+  const anchorNode = selection.anchorNode
+  const focusNode = selection.focusNode
+  const ownerDocument = anchorNode?.ownerDocument
+
+  if (anchorNode && focusNode && ownerDocument) {
+    const range = ownerDocument.createRange()
+    range.setStart(anchorNode, selection.anchorOffset)
+    range.setEnd(focusNode, selection.focusOffset)
 
     return !range.collapsed
   }
@@ -29,22 +33,45 @@ export function isForwardSelection(selection: Selection) {
 export function useTextSelection(win?: Window) {
   const [selection, setSelection] = useState<Selection | undefined>()
   const render = useForceRender()
+  const selectionEndTimeout = useRef<ReturnType<typeof setTimeout>>()
 
-  // On touch screen device, mouse/touch/pointer events not working when selection is created.
-  useEventListener(
-    isTouchScreen ? win?.document : win,
-    isTouchScreen ? 'selectionchange' : 'mouseup',
-    () => {
-      const s = win?.getSelection()
+  const updateSelection = () => {
+    if (selectionEndTimeout.current) {
+      clearTimeout(selectionEndTimeout.current)
+      selectionEndTimeout.current = undefined
+    }
 
-      if (hasSelection(s)) {
-        // sometime `getSelection` will return the same `selection`
-        // when select text by clicking empty space
-        render()
-        setSelection(s)
+    const nextSelection = win?.getSelection()
+    if (hasSelection(nextSelection)) {
+      // `getSelection()` returns the same live object as its range changes.
+      render()
+      setSelection(nextSelection)
+    } else {
+      setSelection(undefined)
+    }
+  }
+
+  const scheduleSelectionUpdate = () => {
+    if (selectionEndTimeout.current) {
+      clearTimeout(selectionEndTimeout.current)
+    }
+    selectionEndTimeout.current = setTimeout(updateSelection, 250)
+  }
+
+  // `selectionchange` covers touch and keyboard selection. `mouseup` keeps the
+  // mouse path responsive, including releases in the parent document.
+  useEventListener(win?.document, 'selectionchange', scheduleSelectionUpdate)
+  useEventListener(win, 'mouseup', updateSelection)
+  useEventListener('mouseup', updateSelection)
+
+  useEffect(() => {
+    setSelection(undefined)
+    return () => {
+      if (selectionEndTimeout.current) {
+        clearTimeout(selectionEndTimeout.current)
       }
-    },
-  )
+    }
+  }, [win])
 
   // https://stackoverflow.com/questions/3413683/disabling-the-context-menu-on-long-taps-on-android
   useEventListener(win, 'contextmenu', (e) => {

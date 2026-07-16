@@ -30,6 +30,7 @@ export interface BookRecord {
   percentage?: number
   definitions: string[]
   annotations: Annotation[]
+  annotationTombstones?: Record<string, number>
   bookmarks: Bookmark[]
   configuration?: {
     typography?: TypographyConfiguration

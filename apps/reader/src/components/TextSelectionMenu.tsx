@@ -35,7 +35,7 @@ interface TextSelectionMenuProps {
 export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({
   tab,
 }) => {
-  const { rendition, annotationRange } = useSnapshot(tab)
+  const { rendition, iframe, annotationRange } = useSnapshot(tab)
   const [settings] = useSettings()
 
   // `manager` is not reactive, so we need to use getter
@@ -43,7 +43,7 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({
     return rendition?.manager?.views._views[0]
   }, [rendition])
 
-  const win = view()?.window
+  const win = iframe as Window | undefined
   const [selection, setSelection] = useTextSelection(win)
 
   // If text selection menu is disabled, don't render it
@@ -56,7 +56,10 @@ export const TextSelectionMenu: React.FC<TextSelectionMenuProps> = ({
 
   // it is possible that both `selection` and `tab.annotationRange`
   // are set when select end within an annotation
-  const range = selection?.getRangeAt(0) ?? annotationRange
+  const selectionRange = selection?.rangeCount
+    ? selection.getRangeAt(0)
+    : undefined
+  const range = selectionRange ?? annotationRange
   if (!range) return null
 
   // prefer to display above the selection to avoid text selection helpers
@@ -270,14 +273,17 @@ const TextSelectionMenuRenderer: React.FC<TextSelectionMenuRendererProps> = ({
                     typeMap[type].class,
                   )}
                   onClick={() => {
-                    tab.putAnnotation(
-                      type,
-                      cfi,
-                      color,
-                      text,
-                      ref.current?.value,
-                    )
-                    hide()
+                    if (
+                      tab.putAnnotation(
+                        type,
+                        cfi,
+                        color,
+                        text,
+                        ref.current?.value,
+                      )
+                    ) {
+                      hide()
+                    }
                   }}
                 >
                   A
@@ -304,14 +310,17 @@ const TextSelectionMenuRenderer: React.FC<TextSelectionMenuRendererProps> = ({
               className="ml-auto"
               compact
               onClick={() => {
-                tab.putAnnotation(
-                  annotation?.type ?? 'highlight',
-                  cfi,
-                  annotation?.color ?? 'yellow',
-                  text,
-                  ref.current?.value,
-                )
-                hide()
+                if (
+                  tab.putAnnotation(
+                    annotation?.type ?? 'highlight',
+                    cfi,
+                    annotation?.color ?? 'yellow',
+                    text,
+                    ref.current?.value,
+                  )
+                ) {
+                  hide()
+                }
               }}
             >
               {t(annotation ? 'update' : 'create')}

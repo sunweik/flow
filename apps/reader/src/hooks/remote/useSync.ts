@@ -7,7 +7,6 @@ import { BookRecord } from '@flow/reader/db'
 import { BookTab } from '@flow/reader/models'
 import {
   toDropboxBookmarkFile,
-  toDropboxNoteFile,
   uploadBookmarks,
   uploadData,
   uploadNotes,
@@ -100,6 +99,10 @@ export function useSync(tab: BookTab) {
       id,
       name: book.name,
       annotations: book.annotations as Annotation[],
+      annotationTombstones: (book.annotationTombstones ?? {}) as Record<
+        string,
+        number
+      >,
     }
 
     mutateRemoteNotes(
@@ -110,7 +113,7 @@ export function useSync(tab: BookTab) {
         if (!uploaded) return remoteNoteFiles
 
         annotationsSyncPending.current = false
-        const noteFile = toDropboxNoteFile(localBook)
+        const noteFile = uploaded
         const i = remoteNoteFiles.findIndex((file) => file.bookId === id)
 
         if (i < 0) return [...remoteNoteFiles, noteFile]
@@ -122,6 +125,7 @@ export function useSync(tab: BookTab) {
     )
   }, [
     annotationsSignature,
+    book.annotationTombstones,
     book.annotations,
     book.name,
     id,

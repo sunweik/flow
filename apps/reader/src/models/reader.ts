@@ -229,8 +229,14 @@ export class BookTab extends BaseTab {
     text: string,
     notes?: string,
   ) {
-    const spine = this.section
-    if (!spine?.navitem) return
+    const spine = this.section ?? (this.view?.section as ISection | undefined)
+    if (!spine) return false
+
+    const spineTitle =
+      spine.navitem?.label.trim() ||
+      this.getSectionTitle(spine) ||
+      spine.href ||
+      this.book.name
 
     const i = this.book.annotations.findIndex((a) => a.cfi === cfi)
     let annotation = this.book.annotations[i]
@@ -243,7 +249,7 @@ export class BookTab extends BaseTab {
         cfi,
         spine: {
           index: spine.index,
-          title: spine.navitem.label,
+          title: spineTitle,
         },
         createAt: now,
         updatedAt: now,
@@ -271,10 +277,18 @@ export class BookTab extends BaseTab {
         annotations: [...snapshot(this.book.annotations)],
       })
     }
+    return true
   }
   removeAnnotation(cfi: string) {
+    const annotation = this.book.annotations.find((a) => a.cfi === cfi)
+    if (!annotation) return
+
     return this.updateBook({
       annotations: snapshot(this.book.annotations).filter((a) => a.cfi !== cfi),
+      annotationTombstones: {
+        ...this.book.annotationTombstones,
+        [annotation.id]: Date.now(),
+      },
     })
   }
 

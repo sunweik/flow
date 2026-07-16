@@ -63,8 +63,12 @@ dbx.auth.refreshAccessToken = () => {
 }
 
 interface SerializedBookRecord
-  extends Omit<BookRecord, 'annotations' | 'bookmarks'> {
+  extends Omit<
+    BookRecord,
+    'annotations' | 'annotationTombstones' | 'bookmarks'
+  > {
   annotations?: Annotation[]
+  annotationTombstones?: Record<string, number>
   bookmarks?: Bookmark[]
 }
 
@@ -86,6 +90,7 @@ export interface DropboxNoteFile {
   bookId: string
   bookName?: string
   annotations: Annotation[]
+  annotationTombstones?: Record<string, number>
 }
 
 const VERSION = 1
@@ -98,6 +103,7 @@ function normalizeBookRecord(book: SerializedBookRecord): BookRecord {
     ...book,
     definitions: book.definitions ?? [],
     annotations: book.annotations ?? [],
+    annotationTombstones: book.annotationTombstones ?? {},
     bookmarks: book.bookmarks ?? [],
   }
 }
@@ -123,6 +129,60 @@ function haveBookmarksChanged(a: Bookmark[] = [], b: Bookmark[] = []) {
   return JSON.stringify(a) !== JSON.stringify(b)
 }
 
+interface AnnotationState {
+  annotations?: readonly Annotation[]
+  annotationTombstones?: Readonly<Record<string, number>>
+}
+
+function mergeAnnotationState(...sources: AnnotationState[]) {
+  const merged = new Map<string, Annotation>()
+  const annotationTombstones: Record<string, number> = {}
+
+  sources.forEach(({ annotations, annotationTombstones: tombstones }) => {
+    annotations?.forEach((annotation) => {
+      const existing = merged.get(annotation.id)
+      const updatedAt = annotation.updatedAt ?? annotation.createAt
+      const existingUpdatedAt = existing?.updatedAt ?? existing?.createAt ?? 0
+      if (!existing || updatedAt >= existingUpdatedAt) {
+        merged.set(annotation.id, annotation)
+      }
+    })
+
+    Object.entries(tombstones ?? {}).forEach(([id, deletedAt]) => {
+      annotationTombstones[id] = Math.max(
+        annotationTombstones[id] ?? 0,
+        deletedAt,
+      )
+    })
+  })
+
+  Object.entries(annotationTombstones).forEach(([id, deletedAt]) => {
+    const annotation = merged.get(id)
+    const updatedAt = annotation?.updatedAt ?? annotation?.createAt ?? 0
+    if (annotation && deletedAt >= updatedAt) merged.delete(id)
+  })
+
+  return {
+    annotations: [...merged.values()].sort((a, b) => a.createAt - b.createAt),
+    annotationTombstones,
+  }
+}
+
+export function mergeAnnotations(
+  ...sources: Array<readonly Annotation[] | undefined>
+) {
+  return mergeAnnotationState(
+    ...sources.map((annotations) => ({ annotations })),
+  ).annotations
+}
+
+function haveAnnotationsChanged(
+  a: readonly Annotation[] = [],
+  b: readonly Annotation[] = [],
+) {
+  return JSON.stringify(a) !== JSON.stringify(b)
+}
+
 export function mergeBooksWithDropboxData(
   localBooks: BookRecord[],
   remoteBooks: BookRecord[],
@@ -130,12 +190,13 @@ export function mergeBooksWithDropboxData(
   remoteNoteFiles: DropboxNoteFile[] = [],
 ) {
   const bookmarkChanges: BookRecord[] = []
+  const annotationChanges: BookRecord[] = []
   const localById = new Map(localBooks.map((book) => [book.id, book]))
   const remoteBookmarksByBookId = new Map(
     remoteBookmarkFiles.map((file) => [file.bookId, file.bookmarks]),
   )
   const remoteNotesByBookId = new Map(
-    remoteNoteFiles.map((file) => [file.bookId, file.annotations]),
+    remoteNoteFiles.map((file) => [file.bookId, file]),
   )
 
   const books = remoteBooks.map((remoteBook) => {
@@ -146,11 +207,32 @@ export function mergeBooksWithDropboxData(
       ? remoteBookmarksByBookId.get(remote.id)!
       : remote.bookmarks
     const bookmarks = mergeBookmarks(local?.bookmarks, syncedBookmarks)
-    const annotations = remoteNotesByBookId.get(remote.id) ?? []
+    const hasNoteFile = remoteNotesByBookId.has(remote.id)
+    const remoteNoteFile = remoteNotesByBookId.get(remote.id)
+    const syncedAnnotations = remoteNoteFile?.annotations ?? remote.annotations
+    const syncedAnnotationTombstones =
+      remoteNoteFile?.annotationTombstones ?? {}
+    const baseAnnotationState = remoteNoteFile
+      ? {
+          annotations: remoteNoteFile.annotations,
+          annotationTombstones: remoteNoteFile.annotationTombstones,
+        }
+      : {
+          annotations: remote.annotations,
+          annotationTombstones: remote.annotationTombstones,
+        }
+    const { annotations, annotationTombstones } = mergeAnnotationState(
+      baseAnnotationState,
+      {
+        annotations: local?.annotations,
+        annotationTombstones: local?.annotationTombstones,
+      },
+    )
 
     const book = {
       ...remote,
       annotations,
+      annotationTombstones,
       bookmarks,
     }
     if (
@@ -159,10 +241,18 @@ export function mergeBooksWithDropboxData(
     ) {
       bookmarkChanges.push(book)
     }
+    if (
+      haveAnnotationsChanged(annotations, syncedAnnotations) ||
+      JSON.stringify(annotationTombstones) !==
+        JSON.stringify(syncedAnnotationTombstones) ||
+      (!hasNoteFile && annotations.length > 0)
+    ) {
+      annotationChanges.push(book)
+    }
     return book
   })
 
-  return { books, bookmarkChanges }
+  return { books, bookmarkChanges, annotationChanges }
 }
 
 function serializeData(books?: BookRecord[], includeBookData = true) {
@@ -173,6 +263,7 @@ function serializeData(books?: BookRecord[], includeBookData = true) {
       const serialized: Partial<BookRecord> = normalizeBookRecord(book)
       if (!includeBookData) {
         delete serialized.annotations
+        delete serialized.annotationTombstones
         delete serialized.bookmarks
       }
       return serialized
@@ -219,13 +310,17 @@ export function getDropboxBookmarkPath(bookId: string) {
 }
 
 export function toDropboxNoteFile(
-  book: Pick<BookRecord, 'id' | 'name' | 'annotations'>,
+  book: Pick<
+    BookRecord,
+    'id' | 'name' | 'annotations' | 'annotationTombstones'
+  >,
 ): DropboxNoteFile {
   return {
     version: VERSION,
     bookId: book.id,
     bookName: book.name,
     annotations: book.annotations as Annotation[],
+    annotationTombstones: book.annotationTombstones,
   }
 }
 
@@ -301,15 +396,57 @@ async function ensureNotesFolder() {
 }
 
 export async function uploadNotes(
-  book: Pick<BookRecord, 'id' | 'name' | 'annotations'>,
+  book: Pick<
+    BookRecord,
+    'id' | 'name' | 'annotations' | 'annotationTombstones'
+  >,
 ) {
   return enqueueDropboxWrite(async () => {
     await ensureNotesFolder()
-    return dbx.filesUpload({
-      path: getDropboxNotePath(book.id),
-      mode: { '.tag': 'overwrite' },
-      contents: JSON.stringify(toDropboxNoteFile(book)),
-    })
+
+    const localNoteFile = toDropboxNoteFile(book)
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      let remoteNoteFile: DropboxNoteFile | undefined
+      let remoteRevision: string | undefined
+      try {
+        const response = await dbx.filesDownload({
+          path: getDropboxNotePath(book.id),
+        })
+        const result = response.result as any
+        const blob: Blob = result.fileBlob
+        const text = await readBlob((reader) => reader.readAsText(blob))
+        remoteNoteFile = JSON.parse(text) as DropboxNoteFile
+        remoteRevision = result.rev
+      } catch (error) {
+        if (!hasDropboxError(error, 'not_found')) throw error
+      }
+
+      const { annotations, annotationTombstones } = mergeAnnotationState(
+        remoteNoteFile ?? {},
+        localNoteFile,
+      )
+      const noteFile = {
+        ...localNoteFile,
+        annotations,
+        annotationTombstones,
+      }
+
+      try {
+        await dbx.filesUpload({
+          path: getDropboxNotePath(book.id),
+          mode: remoteRevision
+            ? { '.tag': 'update', update: remoteRevision }
+            : { '.tag': 'add' },
+          autorename: false,
+          strict_conflict: true,
+          contents: JSON.stringify(noteFile),
+        })
+        return noteFile
+      } catch (error) {
+        if (attempt === 2 || !hasDropboxError(error, 'conflict')) throw error
+      }
+    }
   })
 }
 
