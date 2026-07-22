@@ -132,7 +132,7 @@ export declare class Rendition {
 
   requireView(view: string | Function | object): any
 
-  resize(width?: number, height?: number): void
+  resize(width?: number, height?: number, epubcfi?: string): void
 
   setManager(manager: Function): void
 

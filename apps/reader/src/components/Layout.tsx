@@ -168,7 +168,17 @@ function ViewActionBar({ className, env }: EnvActionBarProps) {
               title={t(`${title}.title`)}
               Icon={Icon}
               active={active}
-              onClick={() => setAction(active ? undefined : name)}
+              onClick={() => {
+                const nextAction = active ? undefined : name
+
+                if (
+                  env === Env.Desktop &&
+                  Boolean(action) !== Boolean(nextAction)
+                ) {
+                  reader.prepareForResize()
+                }
+                setAction(nextAction)
+              }}
               key={name}
             />
           )

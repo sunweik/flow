@@ -105,6 +105,76 @@ export class BookTab extends BaseTab {
     return this.timeline[0]?.location
   }
 
+  private resizeSnapshot?: {
+    location?: string
+    offset?: { left: number; top: number }
+  }
+  private resizeRequest = 0
+  private resizing = false
+
+  prepareForResize() {
+    if (this.resizeSnapshot) return
+
+    const container = this.container
+    this.resizeSnapshot = {
+      location: this.location?.start.cfi,
+      offset:
+        container && container.clientWidth && container.clientHeight
+          ? {
+              left: container.scrollLeft / container.clientWidth,
+              top: container.scrollTop / container.clientHeight,
+            }
+          : undefined,
+    }
+  }
+
+  async resize() {
+    const rendition = this.rendition
+    const location = this.resizeSnapshot?.location ?? this.location?.start.cfi
+    const offset = this.resizeSnapshot?.offset
+    if (!rendition) {
+      this.resizeSnapshot = undefined
+      return
+    }
+
+    const request = ++this.resizeRequest
+    const restoreOffset = () => {
+      if (request !== this.resizeRequest || !offset) return
+
+      const container = this.container
+      if (!container) return
+
+      container.scrollLeft = offset.left * container.clientWidth
+      container.scrollTop = offset.top * container.clientHeight
+    }
+
+    this.resizing = true
+    if (offset) rendition.on('relocated', restoreOffset)
+    try {
+      const relocated = location ? this.waitForRelocated(rendition) : undefined
+      rendition.resize(undefined, undefined, location)
+
+      const resizedLocation = await relocated
+      // epub.js can emit a section-start location while its new columns are
+      // still settling. Wait for that burst before restoring the saved spread.
+      await new Promise<void>((resolve) => setTimeout(resolve, 150))
+      if (request !== this.resizeRequest || !resizedLocation) return
+
+      if (offset) {
+        restoreOffset()
+        await rendition.reportLocation()
+      } else if (location && resizedLocation.start.cfi !== location) {
+        await rendition.display(location)
+      }
+    } finally {
+      if (offset) rendition.off('relocated', restoreOffset)
+      if (request === this.resizeRequest) {
+        this.resizeSnapshot = undefined
+        this.resizing = false
+      }
+    }
+  }
+
   get locationToReturn() {
     return this.locationHistory[this.locationHistory.length - 1]?.location
   }
@@ -676,6 +746,8 @@ export class BookTab extends BaseTab {
 
     this.rendition.on('relocated', (loc: Location) => {
       console.log('relocated', loc)
+      if (this.resizing) return
+
       this.rendered = true
       this.timeline.unshift({
         location: loc,
@@ -865,14 +937,16 @@ export class Reader {
     this.focusedIndex = -1
   }
 
+  prepareForResize() {
+    this.groups.forEach(({ bookTabs }) => {
+      bookTabs.forEach((bookTab) => bookTab.prepareForResize())
+    })
+  }
+
   resize() {
     this.groups.forEach(({ bookTabs }) => {
-      bookTabs.forEach(({ rendition }) => {
-        try {
-          rendition?.resize()
-        } catch (error) {
-          console.error(error)
-        }
+      bookTabs.forEach((bookTab) => {
+        void bookTab.resize().catch(console.error)
       })
     })
   }
